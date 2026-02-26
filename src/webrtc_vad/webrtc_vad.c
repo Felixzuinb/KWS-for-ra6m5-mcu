@@ -19,6 +19,19 @@ static const int kValidRates[] = {8000, 16000, 32000, 48000};
 static const size_t kRatesSize = sizeof(kValidRates) / sizeof(*kValidRates);
 static const int kMaxFrameLengthMs = 30;
 
+// Static VAD instance (non-original library code)
+// This static instance is used by WebRtcVad_Create_static() to avoid dynamic memory allocation
+static VadInstT vad_inst;
+
+// Creates a static instance to the VAD structure (non-original library code)
+// Returns a pointer to the static VAD instance, initialized with init_flag = 0
+VadInst *WebRtcVad_Create_static() 
+{
+    vad_inst.init_flag = 0;
+
+    return (VadInst *) &vad_inst;
+}
+
 VadInst *WebRtcVad_Create() {
     VadInstT *self = (VadInstT *) malloc(sizeof(VadInstT));
 

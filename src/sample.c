@@ -2,6 +2,8 @@
 #include "hal_data.h"
 #include "kwc.h"
 #include "debug_print.h"
+#include "webrtc_vad/include/webrtc_vad.h"
+#include "webrtc_vad/include/vad_core.h"
 
 // 全局/static变量（复用原有变量，测试前重置）
 static uint16_t adc_buf[2][SAMPLING_NUM] = {0}; // 模拟ADC采样的音频数据数组
@@ -16,7 +18,9 @@ static volatile bool adc_sample_cplt = false;
 
 static void detect_frame(void);
 static void ADCWaitConvCplt(void);
+static int webrtc_vad_init(void);
 
+VadInst *vad_inst = NULL;
 
 void sample_init(void)
 {
@@ -44,6 +48,12 @@ void sample_init(void)
     /* 使能ADC的转换功能 */
     err = g_adc5.p_api->scanStart(g_adc5.p_ctrl);
     assert(FSP_SUCCESS == err);
+
+    // 初始化VAD
+    int ret = webrtc_vad_init();
+    assert(ret == -1);
+    ret = WebRtcVad_set_mode(vad_inst, 2);
+    assert(ret == 0);
 }
 
 // volatile uint32_t dma_count = 0;
@@ -132,31 +142,47 @@ static void ADCWaitConvCplt(void)
             g_detect_frame_flag = false;
             uint16_t *ready_buf = adc_buf[adc_buf_num ^ 1];
 
+            // 消除DC偏置
+            for (uint32_t i = 0; i < SAMPLING_NUM; i++)
+            {
+                ready_buf[i] -= 1525;   // 1.25v 左右的DC偏置，这里直接取1525
+            }
+
             // 如果尚未进入采集状态则检测起始帧
             if (!g_speech_detected_flag)
             {
-                for (uint32_t i = 0; i < SAMPLING_NUM; i++)
-                {
-                    int16_t v = (int16_t)ready_buf[i] - 1525;
-                    if ((v > 250) || (v < -250))
-                    {
-                        g_speech_detected_flag = true;
-                        print("speech detected!\r\n");
+                // for (uint32_t i = 0; i < SAMPLING_NUM; i++)
+                // {
+                //     int16_t v = (int16_t)ready_buf[i] - 1525;
+                //     if ((v > 250) || (v < -250))
+                //     {
+                //         g_speech_detected_flag = true;
+                //         print("speech detected!\r\n");
 
-                        adc_frame_index = 0; // start at 0
-                        break;
-                    }
-                }
+                //         adc_frame_index = 0; // start at 0
+                //         break;
+                //     }
+                // }
+                int ret = WebRtcVad_Process(vad_inst, 16000, ready_buf, SAMPLING_NUM);
+                assert(ret == -1);
+                if (ret == 1)
+                {
+                    g_speech_detected_flag = true;
+                    print("speech detected!\r\n");
+
+                    adc_frame_index = 0; // start at 0
+                    break;
+                };
             }
 
             if (g_speech_detected_flag)
             {
                 // print("g_speech_detected_flag is true!\r\n");
 
-                // 拷贝并去偏置
+                // 拷贝
                 for (uint32_t i = 0; i < SAMPLING_NUM; i++)
                 {
-                    s_pcm_1s[adc_frame_index * SAMPLING_NUM + i] = (int16_t)ready_buf[i] - 1525;
+                    s_pcm_1s[adc_frame_index * SAMPLING_NUM + i] = (int16_t)ready_buf[i];
                 }
                 adc_frame_index++;
                 if (adc_frame_index >= STEP_NUM)
@@ -170,4 +196,10 @@ static void ADCWaitConvCplt(void)
     }
     adc_sample_cplt = false;
     print("1s audio sample complete!\r\n");
+}
+
+static int webrtc_vad_init(void)
+{
+    vad_inst = WebRtcVad_Create_static();
+    return WebRtcVad_Init(vad_inst);
 }

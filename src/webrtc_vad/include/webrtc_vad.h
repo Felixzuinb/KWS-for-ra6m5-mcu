@@ -25,6 +25,11 @@ typedef struct WebRtcVadInst VadInst;
 extern "C" {
 #endif
 
+// Creates a static instance to the VAD structure (non-original library code)
+// This function creates a static VAD instance instead of dynamically allocating memory
+// Suitable for embedded systems where dynamic memory allocation is not preferred
+VadInst *WebRtcVad_Create_static(void);
+
 // Creates an instance to the VAD structure.
 VadInst *WebRtcVad_Create(void);
 
