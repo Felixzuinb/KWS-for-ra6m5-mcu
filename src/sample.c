@@ -4,6 +4,9 @@
 #include "debug_print.h"
 #include "webrtc_vad/include/webrtc_vad.h"
 #include "webrtc_vad/include/vad_core.h"
+#include "sys.h"
+
+#define VAD_MODE 3   // 0-3, 决定VAD的激进程度，数值越大代表越激进，误报率越低但漏报率越高
 
 // 全局/static变量（复用原有变量，测试前重置）
 static uint16_t adc_buf[2][SAMPLING_NUM] = {0}; // 模拟ADC采样的音频数据数组
@@ -17,7 +20,6 @@ volatile uint32_t adc5_callback_count = 0;
 volatile uint32_t adc_frame_index = 0;
 static volatile bool adc_sample_cplt = false;
 
-static void detect_frame(void);
 static void ADCWaitConvCplt(void);
 static int webrtc_vad_init(void);
 
@@ -53,7 +55,7 @@ void sample_init(void)
     // 初始化VAD
     int ret = webrtc_vad_init();
     assert(ret != -1);
-    ret = WebRtcVad_set_mode(vad_inst, 2);
+    ret = WebRtcVad_set_mode(vad_inst, VAD_MODE);
     assert(ret == 0);
 }
 
@@ -107,28 +109,6 @@ void sample_start(void)
     assert(FSP_SUCCESS == err);
 }
 
-static void detect_frame(void)
-{
-    if (!g_detect_frame_flag)
-    {
-        return;
-    }
-    g_detect_frame_flag = false;
-
-    uint16_t *adc_data = adc_buf[adc_buf_num ^ 1]; // 使用双缓冲切换前的数据
-
-    // 依据简单的阈值判断是否有语音出现，（后续可借鉴VAD算法）
-    for (uint32_t i = 0; i < SAMPLING_NUM; i++)
-    {
-        int16_t abs_val = (int16_t)((adc_data[i] > 0) ? adc_data[i] : -adc_data[i]);
-        if (abs_val - 1525 > 250)
-        {
-            g_speech_detected_flag = true;
-            break;
-        }
-    }
-}
-
 static void ADCWaitConvCplt(void)
 {
     while (!adc_sample_cplt)
@@ -146,10 +126,16 @@ static void ADCWaitConvCplt(void)
             // 消除DC偏置
             for (uint32_t i = 0; i < SAMPLING_NUM; i++)
             {
-                adc_temp_buf[i] = (int16_t)ready_buf[i] - 1525;   // 1.25v 左右的DC偏置，这里直接取1525
+                adc_temp_buf[i] = (int16_t)ready_buf[i] - 1525; // 1.25v 左右的DC偏置，这里直接取1525
             }
 
-            // 如果尚未进入采集状态则检测起始帧
+            // 每一帧均检测是否有语音
+            HAL_SysTick_Timer_Start_us();
+            int ret = WebRtcVad_Process(vad_inst, 16000, adc_temp_buf, SAMPLING_NUM);
+            assert(ret != -1);
+            uint32_t process_time = HAL_SysTick_Timer_Stop_us();
+
+            // 如果尚未进入采集状态则当前帧检测到语音后进入采集状态
             if (!g_speech_detected_flag)
             {
                 // for (uint32_t i = 0; i < SAMPLING_NUM; i++)
@@ -164,19 +150,16 @@ static void ADCWaitConvCplt(void)
                 //         break;
                 //     }
                 // }
-                int ret = WebRtcVad_Process(vad_inst, 16000, adc_temp_buf, SAMPLING_NUM);
-                assert(ret != -1);
+                // 只有在非采集状态下， vad检测结果才会影响是否进入采集状态
                 if (ret == 1)
                 {
                     g_speech_detected_flag = true;
                     print("speech detected!\r\n");
-
+                    print("VAD processing time: %uus\r\n", process_time);
                     adc_frame_index = 0; // start at 0
-                    break;
                 };
             }
-
-            if (g_speech_detected_flag)
+            else    // 持续帧采集状态
             {
                 // print("g_speech_detected_flag is true!\r\n");
 
@@ -203,4 +186,32 @@ static int webrtc_vad_init(void)
 {
     vad_inst = WebRtcVad_Create_static();
     return WebRtcVad_Init(vad_inst);
+}
+
+static int16_t test[SAMPLING_NUM] = {0};
+
+void vad_test(void)
+{
+    // 初始化VAD
+    int ret = webrtc_vad_init();
+    assert(ret != -1);
+    ret = WebRtcVad_set_mode(vad_inst, 0);
+    assert(ret == 0);
+
+    ret = WebRtcVad_Process(vad_inst, 16000, test, 320);
+    assert(ret != -1);
+
+    if (ret == 1)
+    {
+        print("speech detected!\r\n");
+    };
+}
+
+int webrtc_vad_mode_change(void)
+{
+    static int mode = VAD_MODE;
+    mode = (mode + 1) % 4; // Cycle through modes 0-3
+    int ret = WebRtcVad_set_mode(vad_inst, mode);
+    assert(ret == 0);
+    return mode;
 }

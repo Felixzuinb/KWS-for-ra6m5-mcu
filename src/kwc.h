@@ -8,9 +8,11 @@
 #if SAMPLING_NUM == 160
 #define TRAIN_GLOBAL_MAX (1988140.11f) // 160
 #define STEP_NUM 100                   // STFT时间片数
+#define FRAME_LEN_MS 10
 #elif SAMPLING_NUM == 320
 #define TRAIN_GLOBAL_MAX (3336757.49f) // 320
 #define STEP_NUM 50                    // STFT时间片数
+#define FRAME_LEN_MS 20
 #elif SAMPLING_NUM == 256
 #define TRAIN_GLOBAL_MAX (2686234.55f) // 256 从训练输出复制
 #define STEP_NUM 62                    // STFT时间片数

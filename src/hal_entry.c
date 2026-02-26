@@ -8,6 +8,8 @@
 // #include "test_sounds/yes.h" // 测试用音频数据
 #include "sys.h"
 
+bool key_pressed = false;
+
 #if (1 == BSP_MULTICORE_PROJECT) && BSP_TZ_SECURE_BUILD
 bsp_ipc_semaphore_handle_t g_core_start_semaphore =
     {
@@ -26,12 +28,18 @@ void hal_entry(void)
     // Initialize UART7 for debugging
     g_uart7.p_api->open(g_uart7.p_ctrl, g_uart7.p_cfg);
     print("Hello world\r\n");
+    print("systick freq:%u\r\n", R_FSP_SystemClockHzGet(FSP_PRIV_CLOCK_CPUCLK));
 
+    HAL_SysTick_Timer_Start_us();
     R_BSP_SoftwareDelay(1000, BSP_DELAY_UNITS_MILLISECONDS);
+    uint32_t elapsed_time = HAL_SysTick_Timer_Stop_us();
+    print("Software delay time: %uus\r\n", elapsed_time);
 
     // 开启外部按键中断并使能
     g_external_irq6.p_api->open(g_external_irq6.p_ctrl, g_external_irq6.p_cfg);
     g_external_irq6.p_api->enable(g_external_irq6.p_ctrl);
+
+    // vad_test();
 
     // 初始化KWS
     kws_init();
@@ -48,6 +56,15 @@ void hal_entry(void)
         sample_start();         // 启动采样模块
         kws_preprocess_pcm();   // 预处理1s PCM数据
         kws();                  // 执行KWS
+
+        if (key_pressed)
+        {
+            key_pressed = false;
+            uint8_t mode = webrtc_vad_mode_change();
+            print("VAD mode changed to %u\r\n", mode);
+        }
+
+        // R_BSP_SoftwareDelay(1000, BSP_DELAY_UNITS_MILLISECONDS);
     }
 
     /* Wake up 2nd core if this is first core and we are inside a multicore project. */
@@ -109,10 +126,10 @@ void key_process_jitter(uint32_t tick)
         uwPressTick = 0;
         bsp_io_level_t level = BSP_IO_LEVEL_HIGH;
         g_ioport.p_api->pinRead(g_ioport.p_ctrl, BSP_IO_PORT_00_PIN_00, &level);
-        // print("key level: %u!\r\n", level);
         if (level == BSP_IO_LEVEL_LOW)
         {
-            print("key pressed!\r\n");
+            key_pressed = true;
+            // print("key pressed!\r\n");
         }
     }
 }
