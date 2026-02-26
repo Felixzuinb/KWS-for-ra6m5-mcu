@@ -1,0 +1,54 @@
+# 编译输出与构建目录
+build/
+*.elf
+*.hex
+*.bin
+*.map
+*.a
+*.o
+*.d
+
+# IDE 配置与缓存
+.vscode/
+.theia/
+.settings/
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 编译命令数据库（本地生成）
+compile_commands.json
+
+# 自动生成的 FSP 配置
+ra_gen/
+ra_cfg/
+ra_cfg.txt
+
+# 官方库
+ra/arm/CMSIS_6/
+ra/arm/CMSIS-DSP/
+ra/arm/CMSIS-NN/
+
+
+# 链接器脚本（如果是自动生成而非手动修改）
+bsp_linker_info.h
+memory_regions.ld
+fsp_gen.ld
+
+# 安全相关配置（敏感信息）
+.secure_azone
+.secure_rzone
+secure_xml
+
+# 构建脚本缓存
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+
+# Python 缓存
+__pycache__/
+*.py[cod]
