@@ -1,0 +1,90 @@
+/***********************************************************************************************************************
+* DISCLAIMER
+* This software is supplied by Renesas Electronics Corporation and is only intended for use with Renesas products. No 
+* other uses are authorized. This software is owned by Renesas Electronics Corporation and is protected under all 
+* applicable laws, including copyright laws. 
+* THIS SOFTWARE IS PROVIDED 'AS IS' AND RENESAS MAKES NO WARRANTIES REGARDING
+* THIS SOFTWARE, WHETHER EXPRESS, IMPLIED OR STATUTORY, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, 
+* FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. ALL SUCH WARRANTIES ARE EXPRESSLY DISCLAIMED. TO THE MAXIMUM
+* EXTENT PERMITTED NOT PROHIBITED BY LAW, NEITHER RENESAS ELECTRONICS CORPORATION NOR ANY OF ITS AFFILIATED COMPANIES 
+* SHALL BE LIABLE FOR ANY DIRECT, INDIRECT, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES FOR ANY REASON RELATED TO THIS 
+* SOFTWARE, EVEN IF RENESAS OR ITS AFFILIATES HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+* Renesas reserves the right, without notice, to make changes to this software and to discontinue the availability of 
+* this software. By using this software, you agree to the additional terms and conditions found by accessing the 
+* following link:
+* http://www.renesas.com/disclaimer 
+*
+* Changed from original python code to C source code.
+* Copyright (C) 2017 Renesas Electronics Corporation. All rights reserved.
+***********************************************************************************************************************/
+/***********************************************************************************************************************
+* File Name    : dnn_compute.c
+* Version      : 1.00
+* Description  : The function calls
+***********************************************************************************************************************/
+/**********************************************************************************************************************
+* History : DD.MM.YYYY Version  Description
+*         : 16.06.2017 1.00     First Release
+***********************************************************************************************************************/
+
+ 
+#include "layer_shapes.h"
+#include "layer_graph.h"
+#include "weights.h"
+#include "arm_nnfunctions.h"
+#include <math.h>
+ 
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX_int8 127
+#define MIN_int8 -128
+ 
+TsOUT* dnn_compute(TsIN* serving_default_input_1_0, TsInt *errorcode)
+{
+  TsInt i;
+  *errorcode = 0;
+  //preprocessing of the FP32 input to INT8;
+  for(i = 0; i < layer_shapes.tfl_quantize_shape[0]; i++)
+  {
+    dnn_buffer1[i]  = (TsInt8)MIN(MAX(round((serving_default_input_1_0[i]/layer_shapes.tfl_quantize_shape[1])+layer_shapes.tfl_quantize_shape[2]), MIN_int8), MAX_int8);
+  }
+  //Converting the dataformat from NCHW to NHWC;
+  transpose4d(dnn_buffer1,dnn_buffer2,layer_shapes.tfl_quantize_tr_shape,errorcode);
+  arm_convolve_s8(&cr_buffer,&layer_shapes.sequential_conv2d_Relu_shape.conv_params,&sequential_conv2d_Relu_multiplier,&layer_shapes.sequential_conv2d_Relu_shape.input_dims,dnn_buffer2,&layer_shapes.sequential_conv2d_Relu_shape.filter_dims,sequential_conv2d_Relu_weights,&layer_shapes.sequential_conv2d_Relu_shape.bias_dims,sequential_conv2d_Relu_biases,NULL,&layer_shapes.sequential_conv2d_Relu_shape.output_dims,dnn_buffer1);
+  arm_max_pool_s8(&cr_buffer,&layer_shapes.sequential_max_pooling2d_MaxPool_shape.pool_params,&layer_shapes.sequential_max_pooling2d_MaxPool_shape.input_dims,dnn_buffer1,&layer_shapes.sequential_max_pooling2d_MaxPool_shape.filter_dims,&layer_shapes.sequential_max_pooling2d_MaxPool_shape.output_dims,dnn_buffer2);
+  arm_convolve_s8(&cr_buffer,&layer_shapes.sequential_conv2d_1_Relu_shape.conv_params,&sequential_conv2d_1_Relu_multiplier,&layer_shapes.sequential_conv2d_1_Relu_shape.input_dims,dnn_buffer2,&layer_shapes.sequential_conv2d_1_Relu_shape.filter_dims,sequential_conv2d_1_Relu_weights,&layer_shapes.sequential_conv2d_1_Relu_shape.bias_dims,sequential_conv2d_1_Relu_biases,NULL,&layer_shapes.sequential_conv2d_1_Relu_shape.output_dims,dnn_buffer1);
+  arm_max_pool_s8(&cr_buffer,&layer_shapes.sequential_max_pooling2d_1_MaxPool_shape.pool_params,&layer_shapes.sequential_max_pooling2d_1_MaxPool_shape.input_dims,dnn_buffer1,&layer_shapes.sequential_max_pooling2d_1_MaxPool_shape.filter_dims,&layer_shapes.sequential_max_pooling2d_1_MaxPool_shape.output_dims,dnn_buffer2);
+   
+  
+#if defined(ARM_MATH_MVEI)
+#if ( (FSP_VERSION_MAJOR == 5 && FSP_VERSION_MINOR < 4) || FSP_VERSION_MAJOR < 5 )     
+    // CMSIS-NN 4.1.0 (FSP 5.3.0)
+    // No Additional code   
+#else 
+    // CMSIS-NN 5.0.0 / 6.0.0
+    memcpy(cr_buffer.buf,sequential_dense_MatMul_VecSum,(long unsigned int) layer_shapes.sequential_dense_MatMul_shape.output_dims.c * sizeof(int32_t));
+#endif 
+#endif
+    
+  arm_fully_connected_s8(&cr_buffer,&layer_shapes.sequential_dense_MatMul_shape.fc_params,&sequential_dense_MatMul_multiplier,&layer_shapes.sequential_dense_MatMul_shape.input_dims,dnn_buffer2,&layer_shapes.sequential_dense_MatMul_shape.filter_dims,sequential_dense_MatMul_weights,&layer_shapes.sequential_dense_MatMul_shape.bias_dims,sequential_dense_MatMul_biases,&layer_shapes.sequential_dense_MatMul_shape.output_dims,dnn_buffer1);
+   
+  
+#if defined(ARM_MATH_MVEI)
+#if ( (FSP_VERSION_MAJOR == 5 && FSP_VERSION_MINOR < 4) || FSP_VERSION_MAJOR < 5 )     
+    // CMSIS-NN 4.1.0 (FSP 5.3.0)
+    // No Additional code   
+#else 
+    // CMSIS-NN 5.0.0 / 6.0.0
+    memcpy(cr_buffer.buf,sequential_dense_1_MatMul_VecSum,(long unsigned int) layer_shapes.sequential_dense_1_MatMul_shape.output_dims.c * sizeof(int32_t));
+#endif 
+#endif
+    
+  arm_fully_connected_s8(&cr_buffer,&layer_shapes.sequential_dense_1_MatMul_shape.fc_params,&sequential_dense_1_MatMul_multiplier,&layer_shapes.sequential_dense_1_MatMul_shape.input_dims,dnn_buffer1,&layer_shapes.sequential_dense_1_MatMul_shape.filter_dims,sequential_dense_1_MatMul_weights,&layer_shapes.sequential_dense_1_MatMul_shape.bias_dims,sequential_dense_1_MatMul_biases,&layer_shapes.sequential_dense_1_MatMul_shape.output_dims,dnn_buffer2);
+  arm_softmax_s8(dnn_buffer2,1,layer_shapes.StatefulPartitionedCall_01_shape,StatefulPartitionedCall_01_multiplier[0],StatefulPartitionedCall_01_multiplier[1],StatefulPartitionedCall_01_multiplier[2],dnn_buffer2);
+  //postprocessing of the INT8 output to FP32;
+  for(i = 0; i < layer_shapes.StatefulPartitionedCall_0_shape[0]; i++)
+  {
+    StatefulPartitionedCall_0[i]  = (dnn_buffer2[i]-layer_shapes.StatefulPartitionedCall_0_shape[2])*layer_shapes.StatefulPartitionedCall_0_shape[1];
+  }
+  return(StatefulPartitionedCall_0);
+}

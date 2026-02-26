@@ -1,0 +1,28 @@
++---------------------------------+-----------------------+-----------------------+
+|        Layer Information        |    Size Information   |   Speed Information   |
++------------------+--------------+-----------+-----------+-----------------------+
+| Layer Output No. |  Layer Name  | ROM(Byte) | RAM(Byte) | MAC Operations(times) |
++------------------+--------------+-----------+-----------+-----------------------+
+|        2         | Convolution  |     4,058 |    39,716 |               357,120 |
+|                  |              |           |           |                       |
+|        3         | Max Pooling  |         - |    39,680 |                     - |
+|                  |              |           |           |                       |
+|        4         | Convolution  |    11,360 |    16,232 |             1,428,480 |
+|                  |              |           |           |                       |
+|        5         | Max Pooling  |         - |    15,360 |                     - |
+|                  |              |           |           |                       |
+|        6         | Full Connect |        88 |        16 |                    16 |
+|                  |              |           |           |                       |
+|        7         | Full Connect |        33 |         5 |                     5 |
+|                  |              |           |           |                       |
+|        8         | Output       |         - |        20 |                     - |
+|                  |              |           |           |                       |
++------------------+--------------+-----------+-----------+-----------------------+
+|                  |              |           |   111,029 |                       |
+|                  | TOTAL        |    15,539 +-----------+             1,785,621 |
+|                  |              |           |    79,444 |                       |
++------------------+--------------+-----------+-----------+-----------------------+
+
+# MAC : Multiply and ACcumulation(Number of product-sum operations)
+# Total RAM size (Upper) : Total size of All layers.
+# Total RAM size (Lower) : Actual size (Input + dnn_buffer1 + dnn_buffer2 + ctx buffer + Output).
