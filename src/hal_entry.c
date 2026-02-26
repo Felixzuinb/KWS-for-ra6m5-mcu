@@ -1,57 +1,14 @@
 #include "hal_data.h"
 #include <stdarg.h>
 #include <stdio.h>
-#include <arm_math.h>             // CMSIS-DSP库（FFT依赖）
-#include "mixed_radix_2_5_f32.h" // 混合基FFT（支持160/320点）
-#include "Translator/Typedef.h"
+
+#include "kwc.h"
+#include "sample.h"
 #include "debug_print.h"      // 调试打印函数声明
-#include "test_sounds/yes.h" // 测试用音频数据
-// #include "test_sounds/go.h" // 测试用音频数据
+// #include "test_sounds/yes.h" // 测试用音频数据
 #include "sys.h"
 
-#define SPECIFIC_NUMS 320
-
-#if SPECIFIC_NUMS == 160
-#define TRAIN_GLOBAL_MAX (1988140.11f) // 160
-#define SAMPLING_NUM 160               // 单次FFT点数
-#define STEP_NUM 100                   // STFT时间片数
-#elif SPECIFIC_NUMS == 320
-#define TRAIN_GLOBAL_MAX (3336757.49f) // 320
-#define SAMPLING_NUM 320               // 单次FFT点数
-#define STEP_NUM 50                    // STFT时间片数
-#else
-#define TRAIN_GLOBAL_MAX (2686234.55f) // 256 从训练输出复制
-#define SAMPLING_NUM 256               // 单次FFT点数
-#define STEP_NUM 62                    // STFT时间片数
-#endif
-
-// 复用原有宏定义（和hal_entry保持一致）
-#define SPECTROGRAM_NUM (SAMPLING_NUM / 4)  // 单帧频谱点数
-// #define COEFFICIENT (20000.0f / 2341987.0f) // 训练对齐的缩放系数
-
-// 全局/static变量（复用原有变量，测试前重置）
-static uint16_t adc_buf[2][SAMPLING_NUM] = {0}; // 模拟ADC采样的音频数据数组
-volatile uint8_t adc_buf_num = 0;
-static int16_t s_pcm_1s[SAMPLING_NUM * STEP_NUM]; // 1秒int16_t PCM缓存
-bool adc_test_flag = false;
-
-static float_t s_spectrogram[STEP_NUM][SPECTROGRAM_NUM];                      // 最终频谱图（DNN输入）
-static float_t s_fft_buf[SAMPLING_NUM];                                       // FFT输入缓冲区
-extern TsOUT *dnn_compute(TsIN *serving_default_input_1_0, TsInt *errorcode); // DNN推理函数声明
-static float_t fft_complex[SAMPLING_NUM * 2] = {0};                           // FFT复数输入缓冲区（实部+虚部）
-static float_t fft_mag[SAMPLING_NUM / 2] = {0};                               // FFT幅值输出缓冲区（128点）
-static float_t dnn_input[STEP_NUM * SPECTROGRAM_NUM];                         // DNN输入缓冲区（1维化的频谱图）
-
-fsp_err_t SystickInit(void);
-void sample_init(void);
-void sample_start(void);
-
-static void kws_test();
-static void kws_preprocess_pcm(void);
-static void kws_preprocess(const int16_t *audio_array, uint32_t audio_len, uint32_t samplerate);
-static void convert_and_print_spectrogram(void);
-
-// static uint16_t test_array[128] = {0};
+bool key_pressed = false;
 
 #if (1 == BSP_MULTICORE_PROJECT) && BSP_TZ_SECURE_BUILD
 bsp_ipc_semaphore_handle_t g_core_start_semaphore =
@@ -71,25 +28,43 @@ void hal_entry(void)
     // Initialize UART7 for debugging
     g_uart7.p_api->open(g_uart7.p_ctrl, g_uart7.p_cfg);
     print("Hello world\r\n");
+    print("systick freq:%u\r\n", R_FSP_SystemClockHzGet(FSP_PRIV_CLOCK_CPUCLK));
 
+    HAL_SysTick_Timer_Start_us();
     R_BSP_SoftwareDelay(1000, BSP_DELAY_UNITS_MILLISECONDS);
+    uint32_t elapsed_time = HAL_SysTick_Timer_Stop_us();
+    print("Software delay time: %uus\r\n", elapsed_time);
 
     // 开启外部按键中断并使能
     g_external_irq6.p_api->open(g_external_irq6.p_ctrl, g_external_irq6.p_cfg);
     g_external_irq6.p_api->enable(g_external_irq6.p_ctrl);
 
-    init_mixed_radix_2_5_fft_160_320(SAMPLING_NUM); // 初始化FFT twiddle因子
+    // vad_test();
 
+    // 初始化KWS
+    kws_init();
+
+    // 初始化采样模块
     sample_init();
 
+    // 直接测试保存的音频，见/test_sounds/
     // kws_preprocess(test_audio_array, 16000, 16000);
     // kws_test();
 
     while (1)
     {
-        sample_start();
-        kws_preprocess_pcm();
-        kws_test();
+        sample_start();         // 启动采样模块
+        kws_preprocess_pcm();   // 预处理1s PCM数据
+        kws();                  // 执行KWS
+
+        if (key_pressed)
+        {
+            key_pressed = false;
+            uint8_t mode = webrtc_vad_mode_change();
+            print("VAD mode changed to %u\r\n", mode);
+        }
+
+        // R_BSP_SoftwareDelay(1000, BSP_DELAY_UNITS_MILLISECONDS);
     }
 
     /* Wake up 2nd core if this is first core and we are inside a multicore project. */
@@ -134,240 +109,6 @@ BSP_CMSE_NONSECURE_ENTRY void template_nonsecure_callable()
 FSP_CPP_FOOTER
 
 #endif
-volatile bool g_detect_frame_flag = false;    // adc单帧采样完成后置位，检测当前帧是否有语音
-volatile bool g_speech_detected_flag = false; // 检测到语音后置位，连续采集STEP_NUM后复位
-volatile uint32_t adc5_callback_count = 0;
-volatile uint32_t adc_frame_index = 0;
-static volatile bool adc_sample_cplt = false;
-
-static void kws_detect_frame()
-{
-    if (!g_detect_frame_flag)
-    {
-        return;
-    }
-    g_detect_frame_flag = false;
-
-    uint16_t *adc_data = adc_buf[adc_buf_num ^ 1]; // 使用双缓冲切换前的数据
-
-    // 依据简单的阈值判断是否有语音出现，（后续可借鉴VAD算法）
-    for (uint32_t i = 0; i < SAMPLING_NUM; i++)
-    {
-        int16_t abs_val = (int16_t)((adc_data[i] > 0) ? adc_data[i] : -adc_data[i]);
-        if (abs_val - 1525 > 250)
-        {
-            g_speech_detected_flag = true;
-            break;
-        }
-    }
-}
-
-static void kws_preprocess(const int16_t *audio_array, uint32_t audio_len, uint32_t samplerate)
-{
-    // 步骤1：找到最大值进行幅度缩放对齐
-    int16_t max_val = 0;
-    for (uint32_t i = 0; i < audio_len; i++)
-    {
-        int16_t abs_val = (int16_t)((audio_array[i] > 0) ? audio_array[i] : -audio_array[i]);
-        max_val = (abs_val > max_val) ? abs_val : max_val;
-    }
-    int16_t threashold = (int16_t)(max_val / 4); // 5000 / 20000 * max_val, 以对齐后的±5000为阈值，找到语音开始位置
-
-    // 步骤2：裁剪，语音数据左对齐，并末尾补0
-    uint32_t start_num = 0;
-    for (uint32_t i = 0; i < audio_len; i++)
-    {
-        if (audio_array[i] > threashold || audio_array[i] < -threashold)
-        { // 以±5000为阈值，找到语音开始位置
-            start_num = i;
-            break;
-        }
-    }
-
-    if (max_val == 0)
-    {
-        return; // 避免除0错误，且全0数据无需处理
-    }
-
-    for (size_t i = 0; i < audio_len - start_num; i++)
-    {
-        s_pcm_1s[i] = (int16_t)(audio_array[start_num + i] * (20000.0f / max_val)); // 幅度对齐到±20000; // 从start_num开始处理
-    }
-    for (size_t i = audio_len - start_num; i < audio_len; i++)
-    {
-        s_pcm_1s[i] = 0; // 不足部分填0
-    }
-}
-
-static void kws_preprocess_pcm(void)
-{
-    // kws_preprocess_frame已经检测了语音开始位置，并将数据左对齐到s_pcm_1s开头了，这里只需要做幅度缩放对齐就行了
-
-    // 步骤1：找到最大值进行幅度缩放对齐
-    int16_t max_val = 0;
-    for (uint32_t i = 0; i < SAMPLING_NUM * STEP_NUM; i++)
-    {
-        int16_t abs_val = (int16_t)((s_pcm_1s[i] > 0) ? s_pcm_1s[i] : -s_pcm_1s[i]);
-        max_val = (abs_val > max_val) ? abs_val : max_val;
-    }
-    if (max_val == 0)
-    {
-        return; // 避免除0错误，且全0数据无需处理
-    }
-
-    for (size_t i = 0; i < SAMPLING_NUM * STEP_NUM; i++)
-    {
-        s_pcm_1s[i] = (int16_t)(s_pcm_1s[i] * (20000.0f / max_val)); // 幅度对齐到±20000
-    }
-}
-
-/**
- * @brief  KWS测试函数：直接处理WAV转的C数组，复刻STFT+DNN推理流程
- * @param  audio_array: WAV转的int16_t音频数组（如ab3b47d_nohash_0_audio）
- * @param  audio_len:   音频数组长度（如ab3b47d_nohash_0_LENGTH）
- * @param  samplerate:  音频采样率（如ab3b47d_nohash_0_SAMPLERATE）
- * @retval 无
- */
-static void kws_test()
-{
-
-    // -------------------------- 步骤1：初始化+打印测试开始信息 --------------------------
-    TsInt errorcode = 0;
-    print("[KWS_TEST] start test\r\n");
-
-    uint32_t process_time = HAL_GetTick();
-    uint32_t total_time = 0;
-
-// -------------------------- 步骤3：STFT（短时FFT）+ 频谱图生成（复刻fft_execute逻辑） --------------------------
-
-// 3.2 初始化FFT实例（ARM CMSIS-DSP）
-#if SAMPLING_NUM == 256
-    // 256是2的幂次方，使用标准CFFT实例
-    arm_cfft_instance_f32 s_fft_inst;
-    arm_cfft_init_f32(&s_fft_inst, SAMPLING_NUM);
-#elif SAMPLING_NUM == 160 || SAMPLING_NUM == 320
-    // // 160和320使用mixed_25 FFT实例
-    // arm_fft_mixed_25_instance_f32 s_fft_inst;
-    // arm_fft_mixed_25_init_f32(&s_fft_inst, SAMPLING_NUM);
-#endif
-
-    // float fft_max_val = 0.0f;
-    // 3.3 逐时间片执行FFT+降维+归一化
-    for (uint8_t jj = 0; jj < STEP_NUM; jj++)
-    {
-        // 子步骤1：int32_t PCM → float_t（FFT输入要求）
-        for (uint16_t ii = 0; ii < SAMPLING_NUM; ii++)
-        {
-            s_fft_buf[ii] = (float_t)s_pcm_1s[(jj * SAMPLING_NUM) + ii];
-        }
-
-        // 子步骤2：执行FFT
-        // 构造复数输入（所有采样点数都需要）
-        for (uint16_t ii = 0; ii < SAMPLING_NUM; ii++)
-        {
-            fft_complex[ii * 2] = s_fft_buf[ii]; // 实部
-            fft_complex[ii * 2 + 1] = 0.0f;      // 虚部
-        }
-
-// 根据采样点数选择FFT函数
-#if SAMPLING_NUM == 256
-        // 256是2的幂次方，使用标准CFFT函数
-        arm_cfft_f32(&s_fft_inst, fft_complex, 0, 1);
-#elif SAMPLING_NUM == 160 || SAMPLING_NUM == 320
-        // 160和320使用mixed_25 FFT函数
-        // arm_fft_mixed_25_f32(&s_fft_inst, fft_complex);
-        mixed_radix_2_5_fft_160_320(fft_complex, SAMPLING_NUM);
-#endif
-
-        // 子步骤4：计算FFT幅值（取前N/2点，共轭对称）
-        // float_t fft_mag[SAMPLING_NUM / 2] = {0};
-        arm_cmplx_mag_f32(fft_complex, fft_mag, SAMPLING_NUM / 2);
-
-        // 子步骤5：降维（相邻平均）+ 缩放+归一化
-        // fft_mag[0] = 0; // 直流分量置0
-
-        // 根据SAMPLING_NUM执行相应的降维
-        // 256点FFT：128点→64点降维（SAMPLING_NUM/4）
-        // 160点FFT：80点→40点降维（SAMPLING_NUM/4）
-        // 320点FFT：160点→80点降维（SAMPLING_NUM/4）
-        for (uint8_t kk = 0; kk < (SAMPLING_NUM / 2); kk += 2)
-        {
-            float_t ave = (fft_mag[kk] + fft_mag[kk + 1]) / 2.0f; // 相邻平均
-            s_spectrogram[jj][kk / 2] = ave;
-            // fft_max_val = (ave > fft_max_val) ? ave : fft_max_val;
-        }
-    }
-    // 训练对齐缩放
-    for (uint8_t jj = 0; jj < STEP_NUM; jj++)
-    {
-        for (uint8_t kk = 0; kk < SPECTROGRAM_NUM; kk++)
-        {
-            s_spectrogram[jj][kk] = s_spectrogram[jj][kk] / TRAIN_GLOBAL_MAX;
-        }
-    }
-
-    // convert_and_print_spectrogram();
-
-    // print("[KWS_TEST] STFT done: get %d x %dspectrum, date 0~1\r\n", STEP_NUM, SPECTROGRAM_NUM);
-
-#if 1
-    // -------------------------- 步骤4：DNN推理 + 结果打印 --------------------------
-    // 将二维频谱图转为一维数组（适配dnn_compute输入格式）
-    // float_t dnn_input[STEP_NUM * SPECTROGRAM_NUM];
-    for (uint8_t i = 0; i < STEP_NUM; i++)
-    {
-        for (uint8_t j = 0; j < SPECTROGRAM_NUM; j++)
-        {
-            dnn_input[i * SPECTROGRAM_NUM + j] = s_spectrogram[i][j];
-        }
-    }
-
-    uint32_t stft_time = HAL_GetTick() - process_time;
-    total_time += stft_time;
-    process_time = HAL_GetTick();
-
-    // 调用DNN推理函数
-    TPrecision *pred_result = (TsOUT *)(intptr_t)dnn_compute(dnn_input, &errorcode);
-    if (errorcode != 0 || pred_result == NULL)
-    {
-        print("[KWS_TEST] DNN error! error code: %d\r\n", errorcode);
-        return;
-    }
-
-    uint32_t dnn_time = HAL_GetTick() - process_time;
-    total_time += dnn_time;
-
-    // 解析推理结果：找最大概率类别
-    // 打印最终结果
-    const char *class_name[] = {"go", "left", "right", "stop", "yes"}; // 按训练类别对应
-
-    uint8_t max_class = 0;
-    float_t max_prob = 0.0f;
-    uint8_t class_num = 5; // 分类数和训练模型一致
-    for (uint8_t i = 0; i < class_num; i++)
-    {
-        if (pred_result[i] > max_prob)
-        {
-            max_prob = pred_result[i];
-            max_class = i;
-        }
-        print("[KWS_TEST] type %d %s:0.%d\r\n", i, class_name[i], (int)(pred_result[i] * 10000));
-    }
-
-    print("[KWS_TEST] inference done! class: %s (class %d), 0.%d\r\n",
-          class_name[max_class], max_class, (int)(max_prob * 10000));
-
-    print("\r\n[KWS_TEST] STFT & normalization time: %ums\r\n", stft_time);
-    print("[KWS_TEST] dnn inference time: %ums\r\n", dnn_time);
-    print("[KWS_TEST] kws test time: %ums\r\n", total_time);
-
-    // -------------------------- 步骤5：重置变量（避免影响后续测试） --------------------------
-    memset(s_pcm_1s, 0, sizeof(s_pcm_1s));
-    memset(s_spectrogram, 0, sizeof(s_spectrogram));
-    memset(s_fft_buf, 0, sizeof(s_fft_buf));
-    print("[KWS_TEST] test done, variables reset\r\n\r\n");
-#endif
-}
 
 volatile uint32_t uwPressTick = 0;
 void ex_irq6_callback(external_irq_callback_args_t *p_args)
@@ -385,237 +126,10 @@ void key_process_jitter(uint32_t tick)
         uwPressTick = 0;
         bsp_io_level_t level = BSP_IO_LEVEL_HIGH;
         g_ioport.p_api->pinRead(g_ioport.p_ctrl, BSP_IO_PORT_00_PIN_00, &level);
-        // print("key level: %u!\r\n", level);
         if (level == BSP_IO_LEVEL_LOW)
         {
-            print("key pressed!\r\n");
+            key_pressed = true;
+            // print("key pressed!\r\n");
         }
     }
-}
-
-// volatile uint32_t dma_count = 0;
-void dma0_callback(transfer_callback_args_t *p_args)
-{
-    // print("dma transfer done callback!\r\n");
-    // (void)p_args;
-    // dma_count++;
-    // if(dma_count >= 128)
-    // {
-    //     dma_count = 0;
-    //     adc_sample_cplt = true;
-    // }
-}
-
-void adc5_callback(adc_callback_args_t *p_args)
-{
-    uint16_t *adc_data = adc_buf[adc_buf_num];
-    g_adc5.p_api->read(g_adc5.p_ctrl, ADC_CHANNEL_5, &adc_data[adc5_callback_count]);
-    adc5_callback_count++;
-
-    if (adc5_callback_count >= SAMPLING_NUM)
-    {
-        adc_test_flag = true;
-        adc5_callback_count = 0;
-        adc_buf_num ^= 1;           // 切换写入 buffer
-        g_detect_frame_flag = true; // 通知主循环有完整 frame 可检测/搬运
-    }
-}
-
-void sample_init(void)
-{
-    /* 打开ADC设备完成通用初始化 */
-    fsp_err_t err = g_adc5.p_api->open(g_adc5.p_ctrl, g_adc5.p_cfg);
-    assert(FSP_SUCCESS == err);
-    /* 配置ADC指令的通道完成初始化 */
-    err = g_adc5.p_api->scanCfg(g_adc5.p_ctrl, g_adc5.p_channel_cfg);
-    assert(FSP_SUCCESS == err);
-    /* 打开ELC设备完成初始化 */
-    err = g_elc.p_api->open(g_elc.p_ctrl, g_elc.p_cfg);
-    assert(FSP_SUCCESS == err);
-    /* 使能ELC的连接功能 */
-    err = g_elc.p_api->enable(g_elc.p_ctrl);
-    // assert(FSP_SUCCESS == err);
-    // /* 打开DMA设备完成初始化 */
-    // err = g_transfer0.p_api->open(g_transfer0.p_ctrl, g_transfer0.p_cfg);
-    // assert(FSP_SUCCESS == err);
-    // /* 使能DMAC的ELC触发源 */
-    // err = g_transfer0.p_api->enable(g_transfer0.p_ctrl);
-    // assert(FSP_SUCCESS == err);
-    /* 打开定时器设备完成初始化 */
-    err = g_timer0.p_api->open(g_timer0.p_ctrl, g_timer0.p_cfg);
-    assert(FSP_SUCCESS == err);
-    /* 使能ADC的转换功能 */
-    err = g_adc5.p_api->scanStart(g_adc5.p_ctrl);
-    assert(FSP_SUCCESS == err);
-}
-
-static void ADCWaitConvCplt(void)
-{
-    while (!adc_sample_cplt)
-    {
-        // print("adc_sample_cplt is false!\r\n");
-        // print("adc_test_flag is %d!\r\n", adc_test_flag);
-
-        if (g_detect_frame_flag)
-        {
-            // print("g_detect_frame_flag is true!\r\n");
-
-            g_detect_frame_flag = false;
-            uint16_t *ready_buf = adc_buf[adc_buf_num ^ 1];
-
-            // 如果尚未进入采集状态则检测起始帧
-            if (!g_speech_detected_flag)
-            {
-                for (uint32_t i = 0; i < SAMPLING_NUM; i++)
-                {
-                    int16_t v = (int16_t)ready_buf[i] - 1525;
-                    if ((v > 250) || (v < -250))
-                    {
-                        g_speech_detected_flag = true;
-                        print("speech detected!\r\n");
-
-                        adc_frame_index = 0; // start at 0
-                        break;
-                    }
-                }
-            }
-
-            if (g_speech_detected_flag)
-            {
-                // print("g_speech_detected_flag is true!\r\n");
-
-                // 拷贝并去偏置
-                for (uint32_t i = 0; i < SAMPLING_NUM; i++)
-                {
-                    s_pcm_1s[adc_frame_index * SAMPLING_NUM + i] = (int16_t)ready_buf[i] - 1525;
-                }
-                adc_frame_index++;
-                if (adc_frame_index >= STEP_NUM)
-                {
-                    adc_sample_cplt = true;
-                    g_speech_detected_flag = false;
-                    // keep adc_frame_index for later resets if needed
-                }
-            }
-        }
-    }
-    adc_sample_cplt = false;
-    print("1s audio sample complete!\r\n");
-}
-
-void sample_start(void)
-{
-    fsp_err_t err = FSP_SUCCESS;
-    print("start sampling...\r\n");
-    // g_transfer0.p_cfg->p_info->p_dest = test_array;
-    // g_transfer0.p_cfg->p_info->length = 128;
-    // fsp_err_t err = g_transfer0.p_api->reconfigure(g_transfer0.p_ctrl, g_transfer0.p_cfg->p_info);
-    // assert(FSP_SUCCESS == err);
-
-    // 重置所有相关全局变量
-    adc_sample_cplt = false;
-    adc5_callback_count = 0;
-    adc_frame_index = 0;
-    g_detect_frame_flag = false;
-    g_speech_detected_flag = false;
-
-    adc_test_flag = false;
-
-    /* 确保ADC已初始化 */
-    // err = g_adc5.p_api->open(g_adc5.p_ctrl, g_adc5.p_cfg);
-    // assert(FSP_SUCCESS == err);
-    // err = g_adc5.p_api->scanCfg(g_adc5.p_ctrl, g_adc5.p_channel_cfg);
-    // assert(FSP_SUCCESS == err);
-    // err = g_adc5.p_api->scanStart(g_adc5.p_ctrl);
-    // assert(FSP_SUCCESS == err);
-
-    /* 开启定时器触发ADC采样 */
-    err = g_timer0.p_api->start(g_timer0.p_ctrl);
-    assert(FSP_SUCCESS == err);
-
-    ADCWaitConvCplt();
-    /* 采样结束后关闭定时器 */
-    err = g_timer0.p_api->stop(g_timer0.p_ctrl);
-    assert(FSP_SUCCESS == err);
-
-    // err = g_adc5.p_api->scanStop(g_adc5.p_ctrl);
-    // assert(FSP_SUCCESS == err);
-}
-
-/**
- * 将浮点类型的语谱图数据转化为0-255范围的整数并输出
- * 用于通过串口发送数据到主机进行绘制
- */
-static void convert_and_print_spectrogram(void)
-{
-    // 找到整个语谱图的最大值和最小值，用于归一化
-    float_t min_val = s_spectrogram[0][0];
-    float_t max_val = s_spectrogram[0][0];
-
-    for (uint32_t i = 0; i < STEP_NUM; i++)
-    {
-        for (uint32_t j = 0; j < SPECTROGRAM_NUM; j++)
-        {
-            float_t val = s_spectrogram[i][j];
-            if (val < min_val)
-            {
-                min_val = val;
-            }
-            if (val > max_val)
-            {
-                max_val = val;
-            }
-        }
-    }
-
-    // 计算值范围
-    float_t value_range = max_val - min_val;
-    if (value_range == 0)
-    {
-        value_range = 1.0f; // 避免除零错误
-    }
-
-    // 开始输出
-    print("[");
-
-    for (uint32_t i = 0; i < STEP_NUM; i++)
-    {
-        if (i > 0)
-        {
-            print("\r\n, ");
-        }
-        print("[");
-
-        for (uint32_t j = 0; j < SPECTROGRAM_NUM; j++)
-        {
-            if (j > 0)
-            {
-                print(", ");
-            }
-
-            // 归一化到0-1范围
-            float_t normalized_value = (s_spectrogram[i][j] - min_val) / value_range;
-
-            // 映射到0-255范围
-            uint8_t int_value = (uint8_t)(normalized_value * 255.0f);
-
-            // 确保值在0-255范围内
-            if (int_value < 0)
-            {
-                int_value = 0;
-            }
-            else if (int_value > 255)
-            {
-                int_value = 255;
-            }
-
-            // 输出值
-            print("%d", int_value);
-        }
-
-        print("]");
-    }
-
-    // 结束输出
-    print("]");
 }
