@@ -8,6 +8,7 @@
 // 全局/static变量（复用原有变量，测试前重置）
 static uint16_t adc_buf[2][SAMPLING_NUM] = {0}; // 模拟ADC采样的音频数据数组
 volatile uint8_t adc_buf_num = 0;
+static int16_t adc_temp_buf[SAMPLING_NUM] = {0};
 
 volatile bool g_detect_frame_flag = false;    // adc单帧采样完成后置位，检测当前帧是否有语音
 volatile bool g_speech_detected_flag = false; // 检测到语音后置位，连续采集STEP_NUM后复位
@@ -51,7 +52,7 @@ void sample_init(void)
 
     // 初始化VAD
     int ret = webrtc_vad_init();
-    assert(ret == -1);
+    assert(ret != -1);
     ret = WebRtcVad_set_mode(vad_inst, 2);
     assert(ret == 0);
 }
@@ -145,7 +146,7 @@ static void ADCWaitConvCplt(void)
             // 消除DC偏置
             for (uint32_t i = 0; i < SAMPLING_NUM; i++)
             {
-                ready_buf[i] -= 1525;   // 1.25v 左右的DC偏置，这里直接取1525
+                adc_temp_buf[i] = (int16_t)ready_buf[i] - 1525;   // 1.25v 左右的DC偏置，这里直接取1525
             }
 
             // 如果尚未进入采集状态则检测起始帧
@@ -163,8 +164,8 @@ static void ADCWaitConvCplt(void)
                 //         break;
                 //     }
                 // }
-                int ret = WebRtcVad_Process(vad_inst, 16000, ready_buf, SAMPLING_NUM);
-                assert(ret == -1);
+                int ret = WebRtcVad_Process(vad_inst, 16000, adc_temp_buf, SAMPLING_NUM);
+                assert(ret != -1);
                 if (ret == 1)
                 {
                     g_speech_detected_flag = true;
@@ -182,7 +183,7 @@ static void ADCWaitConvCplt(void)
                 // 拷贝
                 for (uint32_t i = 0; i < SAMPLING_NUM; i++)
                 {
-                    s_pcm_1s[adc_frame_index * SAMPLING_NUM + i] = (int16_t)ready_buf[i];
+                    s_pcm_1s[adc_frame_index * SAMPLING_NUM + i] = adc_temp_buf[i];
                 }
                 adc_frame_index++;
                 if (adc_frame_index >= STEP_NUM)
