@@ -653,7 +653,7 @@ int WebRtcVad_CalcVad16khz(VadInstT *inst, const int16_t *speech_frame,
                            size_t frame_length) {
     size_t len;
     int vad;
-    int16_t speechNB[240]; // Downsampled speech frame: 480 samples (30ms in WB)
+    static int16_t speechNB[240]; // Downsampled speech frame: 480 samples (30ms in WB)
 
     // Wideband: Downsample signal before doing VAD
     WebRtcVad_Downsampling(speech_frame, speechNB, inst->downsampling_filter_states,

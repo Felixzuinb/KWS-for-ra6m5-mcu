@@ -244,8 +244,8 @@ int16_t WebRtcVad_CalculateFeatures(VadInstT *self, const int16_t *data_in,
     // 10, 20 or 30 ms in 8 kHz. Therefore, the intermediate downsampled data will
     // have at most 120 samples after the first split and at most 60 samples after
     // the second split.
-    int16_t hp_120[120], lp_120[120];
-    int16_t hp_60[60], lp_60[60];
+    static int16_t hp_120[120], lp_120[120];
+    static int16_t hp_60[60], lp_60[60];
     const size_t half_data_length = data_length >> 1;
     size_t length = half_data_length;  // |data_length| / 2, corresponds to
     // bandwidth = 2000 Hz after downsampling.
