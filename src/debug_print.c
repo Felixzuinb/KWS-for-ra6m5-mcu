@@ -55,6 +55,25 @@ void uart7_print(const char *format, ...)
     }
 }
 
+void __assert_func (const char * file, int line, const char * func, const char * expr)
+{
+    // 关闭中断（可选，根据需要）
+    // __disable_irq();
+    
+    // 打印断言信息（如果有串口或其他输出方式）
+    print("Assertion failed: %s\r\n", expr);
+    print("File: %s, Line: %d, Function: %s\r\n", file, line, func);
+    
+    // 可以添加其他处理，比如闪烁 LED、保存错误信息等
+    __BKPT(0);
+    
+    // 进入死循环或重启系统
+    while (1)
+    {
+        // 可选：添加一个简单的延时或状态指示
+    }
+}
+
 // static void uart7_wait_for_tx(void)
 // {
 //     while (!g_uart7_tx_complete_flag)
