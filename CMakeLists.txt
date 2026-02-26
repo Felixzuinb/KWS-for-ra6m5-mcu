@@ -49,7 +49,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS "TRUE")
 
 include(${CMAKE_CURRENT_LIST_DIR}/Config.cmake)
 
-include_directories(${CMAKE_CURRENT_LIST_DIR}/src/Translator2/)
 include_directories(${CMAKE_CURRENT_LIST_DIR}/src/)
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/GeneratedCfg.cmake)
@@ -62,6 +61,3 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/GeneratedSrc.cmake)
 set(CMSIS_WARNING_FLAGS
     -Wno-conversion          # 屏蔽类型转换警告（最常用）
 )
-
-# # 过滤掉Translator目录下的文件，只使用Translator2
-# list(FILTER Source_Files EXCLUDE REGEX "${CMAKE_CURRENT_SOURCE_DIR}/src/Translator/")
