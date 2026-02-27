@@ -27,6 +27,7 @@
 *         : 16.06.2017 1.00     First Release
 ***********************************************************************************************************************/
 
+#include "struct_nn.h"
 #include "Typedef.h"
 #include <stdlib.h>
 #ifndef LAYER_SHAPES_H_
@@ -34,32 +35,39 @@
  
 TsOUT* dnn_compute(TsIN*, TsInt*);
  
-TsInt8 dnn_buffer1[39680];
-TsInt8 dnn_buffer2[15872];
+TsInt8 dnn_buffer1[40000];
+TsInt8 dnn_buffer2[40000];
 TsOUT StatefulPartitionedCall_0[5];
+#if defined(ARM_MATH_MVEI)
+int8_t scratch_buffer[1792];
+const cmsis_nn_context cr_buffer={(int8_t *)scratch_buffer,1792};
+#else
+int8_t scratch_buffer[368];
+const cmsis_nn_context cr_buffer={(int8_t *)scratch_buffer,368};
+#endif
  
 struct shapes{
     TFloat tfl_quantize_shape[3];
-    TsInt sequential_conv2d_Relu_shape[16];
-    TsInt sequential_max_pooling2d_MaxPool_shape[11];
-    TsInt sequential_conv2d_1_Relu_shape[16];
-    TsInt sequential_max_pooling2d_1_MaxPool_shape[11];
-    TsInt sequential_max_pooling2d_1_MaxPool_tr_shape[5];
-    TsInt sequential_dense_MatMul_shape[7];
-    TsInt sequential_dense_1_MatMul_shape[7];
+    TsInt tfl_quantize_tr_shape[5];
+    conv sequential_conv2d_Relu_shape;
+    m_pool sequential_max_pooling2d_MaxPool_shape;
+    conv sequential_conv2d_1_Relu_shape;
+    m_pool sequential_max_pooling2d_1_MaxPool_shape;
+    fc sequential_dense_MatMul_shape;
+    fc sequential_dense_1_MatMul_shape;
     TsInt StatefulPartitionedCall_01_shape;
     TFloat StatefulPartitionedCall_0_shape[3];
 };
  
 struct shapes layer_shapes ={
-    {3968,0.001750428811646998,-128},
-    {1,1,62,64,10,1,3,3,62,64,1,1,1,1,1,1},
-    {1,10,62,64,31,32,2,2,2,2,0},
-    {1,10,31,32,16,10,3,3,31,32,1,1,1,1,1,1},
-    {1,16,31,32,15,16,2,2,2,2,0},
-    {1,16,15,16,1},
-    {1,3840,3840,16,1,1,0},
-    {1,16,16,5,1,1,0},
+    {4000,0.0015694326721131802,-128},
+    {1,1,50,80,1},
+    {{1,50,80,1},{10,3,3,1},{1,50,80,10},{1,1,1,10},{128,-128,{1,1},{1,1},{1,1},{-128,127}}},
+    {{{2,2},{0,0},{-128,127}},{1,50,80,10},{1,2,2,1},{1,25,40,10}},
+    {{1,25,40,10},{16,3,3,10},{1,25,40,16},{1,1,1,16},{128,-128,{1,1},{1,1},{1,1},{-128,127}}},
+    {{{2,2},{0,0},{-128,127}},{1,25,40,16},{1,2,2,1},{1,12,20,16}},
+    {{1,1,3840,1},{3840,1,1,16},{1,1,1,16},{1,1,1,16},{128,0,-128,{-128,127}}},
+    {{1,1,16,1},{16,1,1,5},{1,1,1,5},{1,1,1,5},{128,0,22,{-128,127}}},
     5,
     {5,0.00390625,-128}
 };

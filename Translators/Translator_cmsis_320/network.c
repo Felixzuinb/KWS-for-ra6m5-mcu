@@ -18,26 +18,71 @@
 * Copyright (C) 2017 Renesas Electronics Corporation. All rights reserved.
 ***********************************************************************************************************************/
 /***********************************************************************************************************************
-* File Name    : layer_graph.h
+* File Name    : network.c
 * Version      : 1.00
-* Description  : Declarations of all functions
+* Description  : Definitions of all functions
 ***********************************************************************************************************************/
 /**********************************************************************************************************************
 * History : DD.MM.YYYY Version  Description
 *         : 16.06.2017 1.00     First Release
 ***********************************************************************************************************************/
 
-#ifndef LAYER_GRAPH_H_
-#define LAYER_GRAPH_H_
+#include "stdlib.h"
+#include "Typedef.h"
+#include "math.h"
+#include "layer_graph.h"
+#include "struct_nn.h"
+#include "Typedef.h"
+#include "arm_nnfunctions.h"
+/***********************************************************************************************************************
+* Function Name: transpose
+* Description  : Performs matrix transpose
+* Arguments    : dData		- array of input data
+*				 dOut		- placeholder for the output
+*				 iShapes	- dimensions of input array + flag to represent transpose axis (i.e., data)
+*                errorcode - errorcode if any issue 
+* Return Value : no return value
+***********************************************************************************************************************/
+void transpose4d(TsInt8 *data, TsInt8 *output, TsInt *iShapes, TsInt *errorcode)
+{    
+    if (*errorcode!=1)
+    {
+        TsInt flag = iShapes[4];
 
-void max_pooling_without_pad(TsInt8 *, TsInt8 *, TsInt *, TsInt *);
-void average_pooling_without_pad(TsInt8 *, TsInt8 *, TsInt *, TsInt *);
-void pooling_without_pad(TsInt8 *, TsInt8 *, TsInt *, TsInt *);
-void transpose4d(TsInt8 *, TsInt8 *, TsInt*, TsInt *);
-void padding(TsInt8 *, const TsInt8 *,TsInt8 *,TsInt *,TsInt *);
-void convolution(TsInt8 *,TsInt8 *, const TsInt8 *, const TsInt32 *, const TsInt32 *, const TsInt8 *, const TsInt8 *,TsInt8 *,TsInt *,TsInt *);
-void avgpool_padding(TsInt8 *, TPrecision *, TsInt *, TsInt *);
-void innerproduct(TsInt8 *, const TsInt8 *, const TsInt32 *, const TsInt32 *, const TsInt8 *, const TsInt8 *,TsInt8 *,TsInt *,TsInt *);
-void softmax(TsInt8 *, const TPrecision *, const TsInt8 *,TsInt8 *,TsInt,TsInt *);
+        // Execute RXDSP or CMSIS Transpose4d or C Transpose 4d or CCRX complier or CCRL complier
+        TsInt c = 0;
+        TsInt i,j;
+        if(flag == 0){      // NHWC to NCHW
+            TsInt N = iShapes[0]; // Number of samples
+            TsInt H = iShapes[1]; // Number of channels
+            TsInt W = iShapes[2]; // Input image height
+            TsInt C = iShapes[3]; // Input image width
+            
+            for(i = 0; i < N*C ; i++){
+                for(j = 0; j < H*W ; j++){        
+                    output[c] = data[i+(j*C)];
+                    c++;
+                }
+            }
 
-#endif
+        }
+        else if(flag == 1){     // NCHW to NHWC
+            TsInt N = iShapes[0]; // Number of samples
+            TsInt C = iShapes[1]; // Number of channels
+            TsInt H = iShapes[2]; // Input image height
+            TsInt W = iShapes[3]; // Input image width
+
+            for(i = 0; i < H*W ; i++){
+                for(j = 0; j < N*C ; j++){      
+                    output[c] = data[i+(j*H*W)];
+                    c++;
+                }
+
+            }
+        }
+    }
+    
+}
+
+
+
