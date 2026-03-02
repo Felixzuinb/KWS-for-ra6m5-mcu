@@ -1,0 +1,9 @@
+#ifndef MACRO_DEFINES
+#define MACRO_DEFINES
+
+
+#define MAX_OUT_CH 16
+#define MAX_NUM_KERNEL_ROWS 16
+
+
+#endif // MACRO_DEFINES

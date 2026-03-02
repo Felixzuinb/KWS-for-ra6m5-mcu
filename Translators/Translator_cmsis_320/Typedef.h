@@ -18,58 +18,47 @@
 * Copyright (C) 2017 Renesas Electronics Corporation. All rights reserved.
 ***********************************************************************************************************************/
 /***********************************************************************************************************************
-* File Name    : layer_shapes.h
+* File Name    : Typedef.h
 * Version      : 1.00
-* Description  : Initializations
+* Description  : Type Definitions to give new names for data types
 ***********************************************************************************************************************/
 /**********************************************************************************************************************
 * History : DD.MM.YYYY Version  Description
 *         : 16.06.2017 1.00     First Release
 ***********************************************************************************************************************/
 
-#include "struct_nn.h"
-#include "Typedef.h"
-#include <stdlib.h>
-#ifndef LAYER_SHAPES_H_
-#define LAYER_SHAPES_H_
- 
-TsOUT* dnn_compute(TsIN*, TsInt*);
- 
-TsInt8 dnn_buffer1[40000];
-TsInt8 dnn_buffer2[40000];
-TsOUT StatefulPartitionedCall_0[3];
-#if defined(ARM_MATH_MVEI)
-int8_t scratch_buffer[1792];
-const cmsis_nn_context cr_buffer={(int8_t *)scratch_buffer,1792};
+#include <stdint.h>
+#ifndef TYPEDEF_H_
+#define TYPEDEF_H_
+
+#if defined iUINT8 
+typedef uint8_t TsIN;
+#elif defined iINT8 
+typedef int8_t TsIN;
 #else
-int8_t scratch_buffer[368];
-const cmsis_nn_context cr_buffer={(int8_t *)scratch_buffer,368};
+typedef float TsIN;
 #endif
- 
-struct shapes{
-    TFloat tfl_quantize_shape[3];
-    TsInt tfl_quantize_tr_shape[5];
-    conv sequential_conv2d_Relu_shape;
-    m_pool sequential_max_pooling2d_MaxPool_shape;
-    conv sequential_conv2d_1_Relu_shape;
-    m_pool sequential_max_pooling2d_1_MaxPool_shape;
-    fc sequential_dense_MatMul_shape;
-    fc sequential_dense_1_MatMul_shape;
-    TsInt StatefulPartitionedCall_01_shape;
-    TFloat StatefulPartitionedCall_0_shape[3];
-};
- 
-struct shapes layer_shapes ={
-    {4000,0.002229397650808096,-128},
-    {1,1,50,80,1},
-    {{1,50,80,1},{10,3,3,1},{1,50,80,10},{1,1,1,10},{128,-128,{1,1},{1,1},{1,1},{-128,127}}},
-    {{{2,2},{0,0},{-128,127}},{1,50,80,10},{1,2,2,1},{1,25,40,10}},
-    {{1,25,40,10},{16,3,3,10},{1,25,40,16},{1,1,1,16},{128,-128,{1,1},{1,1},{1,1},{-128,127}}},
-    {{{2,2},{0,0},{-128,127}},{1,25,40,16},{1,2,2,1},{1,12,20,16}},
-    {{1,1,3840,1},{3840,1,1,16},{1,1,1,16},{1,1,1,16},{128,0,-128,{-128,127}}},
-    {{1,1,16,1},{16,1,1,3},{1,1,1,3},{1,1,1,3},{128,0,32,{-128,127}}},
-    3,
-    {3,0.00390625,-128}
-};
- 
+
+#if defined oUINT8 
+typedef uint8_t TsOUT;
+
+#elif defined oINT8 
+typedef int8_t TsOUT;
+
+#else
+typedef float TsOUT;
+
+#endif
+typedef signed char   TsChar;
+typedef unsigned char TuChar;
+typedef signed short  TsShort;
+typedef unsigned short  TuShort;
+typedef signed int TsInt;
+typedef int8_t TsInt8;
+typedef int32_t  TsInt32;
+typedef unsigned int TuInt;
+typedef float        TFloat;
+typedef double		 TDouble;
+typedef int64_t TsInt64;
+typedef float TPrecision;
 #endif

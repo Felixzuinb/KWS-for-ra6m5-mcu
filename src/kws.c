@@ -191,11 +191,13 @@ void kws()
 
     // 解析推理结果：找最大概率类别
     // 打印最终结果
-    const char *class_name[] = {"go", "left", "right", "stop", "yes"}; // 按训练类别对应
+    // const char *class_name[] = {"go", "left", "right", "stop", "yes"}; // 按训练类别对应
+    const char *class_name[] = {"yes", "stop", "unknown"}; // 按训练类别对应
 
     uint8_t max_class = 0;
     float_t max_prob = 0.0f;
-    uint8_t class_num = 5; // 分类数和训练模型一致
+    // uint8_t class_num = 5; // 分类数和训练模型一致
+    uint8_t class_num = 3; // 分类数和训练模型一致
     for (uint8_t i = 0; i < class_num; i++)
     {
         if (pred_result[i] > max_prob)

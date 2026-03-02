@@ -18,47 +18,17 @@
 * Copyright (C) 2017 Renesas Electronics Corporation. All rights reserved.
 ***********************************************************************************************************************/
 /***********************************************************************************************************************
-* File Name    : Typedef.h
+* File Name    : layer_graph.h
 * Version      : 1.00
-* Description  : Type Definitions to give new names for data types
+* Description  : Declarations of all functions
 ***********************************************************************************************************************/
 /**********************************************************************************************************************
 * History : DD.MM.YYYY Version  Description
 *         : 16.06.2017 1.00     First Release
 ***********************************************************************************************************************/
 
-#include <stdint.h>
-#ifndef TYPEDEF_H_
-#define TYPEDEF_H_
+#ifndef LAYER_GRAPH_H_
+#define LAYER_GRAPH_H_
 
-#if defined iUINT8 
-typedef uint8_t TsIN;
-#elif defined iINT8 
-typedef int8_t TsIN;
-#else
-typedef float TsIN;
-#endif
-
-#if defined oUINT8 
-typedef uint8_t TsOUT;
-
-#elif defined oINT8 
-typedef int8_t TsOUT;
-
-#else
-typedef float TsOUT;
-
-#endif
-typedef signed char   TsChar;
-typedef unsigned char TuChar;
-typedef signed short  TsShort;
-typedef unsigned short  TuShort;
-typedef signed int TsInt;
-typedef int8_t TsInt8;
-typedef int32_t  TsInt32;
-typedef unsigned int TuInt;
-typedef float        TFloat;
-typedef double		 TDouble;
-typedef int64_t TsInt64;
-typedef float TPrecision;
+void transpose4d(TsInt8 *, TsInt8 *, TsInt*, TsInt *);
 #endif
