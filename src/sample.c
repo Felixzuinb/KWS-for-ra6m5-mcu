@@ -132,10 +132,11 @@ static void ADCWaitConvCplt(void)
             else    // 持续帧采集状态
             {
                 // 拷贝
-                for (uint32_t i = 0; i < SAMPLING_NUM; i++)
-                {
-                    s_pcm_1s[adc_frame_index * SAMPLING_NUM + i] = adc_temp_buf[i];
-                }
+                // for (uint32_t i = 0; i < SAMPLING_NUM; i++)
+                // {
+                //     s_pcm_1s[adc_frame_index * SAMPLING_NUM + i] = adc_temp_buf[i];
+                // }
+                memcpy(&s_pcm_1s[adc_frame_index * SAMPLING_NUM], adc_temp_buf, SAMPLING_NUM * sizeof(int16_t));
                 adc_frame_index++;
                 if (adc_frame_index >= STEP_NUM)
                 {
