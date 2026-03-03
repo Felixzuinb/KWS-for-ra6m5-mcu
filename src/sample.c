@@ -78,7 +78,10 @@ void dma0_callback(transfer_callback_args_t *p_args)
 void sample_start(void)
 {
     fsp_err_t err = FSP_SUCCESS;
+
+    #if SHOW_KWS_INFO
     print("start sampling...\r\n");
+    #endif
 
     // 重置所有相关全局变量
     adc_sample_cplt = false;
@@ -124,9 +127,12 @@ static void ADCWaitConvCplt(void)
                 if (ret == 1)
                 {
                     g_speech_detected_flag = true;
+                    adc_frame_index = 0; // start at 0
+
+                    #if SHOW_KWS_INFO
                     print("speech detected!\r\n");
                     print("VAD processing time: %uus\r\n", process_time);
-                    adc_frame_index = 0; // start at 0
+                    #endif
                 };
             }
             else    // 持续帧采集状态
@@ -148,7 +154,10 @@ static void ADCWaitConvCplt(void)
         }
     }
     adc_sample_cplt = false;
+
+    #if SHOW_KWS_INFO
     print("1s audio sample complete!\r\n");
+    #endif
 }
 
 static int webrtc_vad_init(void)

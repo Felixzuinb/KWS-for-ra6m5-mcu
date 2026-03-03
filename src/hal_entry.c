@@ -28,12 +28,12 @@ void hal_entry(void)
     // Initialize UART7 for debugging
     g_uart7.p_api->open(g_uart7.p_ctrl, g_uart7.p_cfg);
     print("Hello world\r\n");
-    print("systick freq:%u\r\n", R_FSP_SystemClockHzGet(FSP_PRIV_CLOCK_CPUCLK));
+    // print("systick freq:%u\r\n", R_FSP_SystemClockHzGet(FSP_PRIV_CLOCK_CPUCLK));
 
-    HAL_SysTick_Timer_Start_us();
-    R_BSP_SoftwareDelay(1000, BSP_DELAY_UNITS_MILLISECONDS);
-    uint32_t elapsed_time = HAL_SysTick_Timer_Stop_us();
-    print("Software delay time: %uus\r\n", elapsed_time);
+    // HAL_SysTick_Timer_Start_us();
+    // R_BSP_SoftwareDelay(1000, BSP_DELAY_UNITS_MILLISECONDS);
+    // uint32_t elapsed_time = HAL_SysTick_Timer_Stop_us();
+    // print("Software delay time: %uus\r\n", elapsed_time);
 
     // 开启外部按键中断并使能
     g_external_irq6.p_api->open(g_external_irq6.p_ctrl, g_external_irq6.p_cfg);
@@ -55,7 +55,9 @@ void hal_entry(void)
     {
         sample_start();         // 启动采样模块
         kws_preprocess_pcm();   // 预处理1s PCM数据
-        kws();                  // 执行KWS
+        kws_result_t ret = kws();                  // 执行KWS
+
+        print("[MAIN] KWS result: %s\r\n", kws_class_name[ret]);
 
         if (key_pressed)
         {

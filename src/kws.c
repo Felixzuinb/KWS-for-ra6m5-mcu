@@ -1,9 +1,10 @@
 #include "kwc.h"
-#include "arm_math.h"             // CMSIS-DSP库（FFT依赖）
+#include "arm_math.h"            // CMSIS-DSP库（FFT依赖）
 #include "mixed_radix_2_5_f32.h" // 混合基FFT（支持160/320点）
 #include "debug_print.h"
 #include "sys.h"
-
+#include <string.h>
+#include <math.h>
 
 int16_t s_pcm_1s[SAMPLING_NUM * STEP_NUM]; // 1秒int16_t PCM缓存
 
@@ -14,6 +15,7 @@ static float_t fft_complex[SAMPLING_NUM * 2] = {0};                           //
 static float_t fft_mag[SAMPLING_NUM / 2] = {0};                               // FFT幅值输出缓冲区（128点）
 static float_t dnn_input[STEP_NUM * SPECTROGRAM_NUM];                         // DNN输入缓冲区（1维化的频谱图）
 
+const char *kws_class_name[] = {"yes", "stop", "unknown"}; // 按训练类别对应
 
 static void convert_and_print_spectrogram(void);
 
@@ -48,10 +50,7 @@ void kws_preprocess(const int16_t *audio_array, uint32_t audio_len, uint32_t sam
     {
         s_pcm_1s[i] = (int16_t)(audio_array[start_num + i] * (20000.0f / max_val)); // 幅度对齐到±20000; // 从start_num开始处理
     }
-    for (size_t i = audio_len - start_num; i < audio_len; i++)
-    {
-        s_pcm_1s[i] = 0; // 不足部分填0
-    }
+    memset(&s_pcm_1s[audio_len - start_num], 0, start_num * sizeof(int16_t)); // 末尾补0
 }
 
 void kws_preprocess_pcm(void)
@@ -81,11 +80,14 @@ void kws_init(void)
     init_mixed_radix_2_5_fft_160_320(SAMPLING_NUM); // 初始化FFT twiddle因子
 }
 
-void kws()
+kws_result_t kws(void)
 {
     // -------------------------- 步骤1：初始化+打印测试开始信息 --------------------------
     TsInt errorcode = 0;
+
+    #if SHOW_KWS_INFO
     print("[KWS] start\r\n");
+    #endif
 
     uint32_t process_time = HAL_GetTick();
     uint32_t total_time = 0;
@@ -162,17 +164,10 @@ void kws()
 
     // print("[KWS] STFT done: get %d x %dspectrum, date 0~1\r\n", STEP_NUM, SPECTROGRAM_NUM);
 
-#if 1
     // -------------------------- 步骤4：DNN推理 + 结果打印 --------------------------
     // 将二维频谱图转为一维数组（适配dnn_compute输入格式）
     // float_t dnn_input[STEP_NUM * SPECTROGRAM_NUM];
-    for (uint8_t i = 0; i < STEP_NUM; i++)
-    {
-        for (uint8_t j = 0; j < SPECTROGRAM_NUM; j++)
-        {
-            dnn_input[i * SPECTROGRAM_NUM + j] = s_spectrogram[i][j];
-        }
-    }
+    memcpy(dnn_input, s_spectrogram, sizeof(dnn_input));
 
     uint32_t stft_time = HAL_GetTick() - process_time;
     total_time += stft_time;
@@ -183,17 +178,13 @@ void kws()
     if (errorcode != 0 || pred_result == NULL)
     {
         print("[KWS] DNN error! error code: %d\r\n", errorcode);
-        return;
+        return KWS_ERROR;
     }
 
     uint32_t dnn_time = HAL_GetTick() - process_time;
     total_time += dnn_time;
 
     // 解析推理结果：找最大概率类别
-    // 打印最终结果
-    // const char *class_name[] = {"go", "left", "right", "stop", "yes"}; // 按训练类别对应
-    const char *class_name[] = {"yes", "stop", "unknown"}; // 按训练类别对应
-
     uint8_t max_class = 0;
     float_t max_prob = 0.0f;
     // uint8_t class_num = 5; // 分类数和训练模型一致
@@ -205,22 +196,33 @@ void kws()
             max_prob = pred_result[i];
             max_class = i;
         }
-        print("[KWS] type %d %s:0.%d\r\n", i, class_name[i], (int)(pred_result[i] * 10000));
+
+#if SHOW_KWS_INFO
+        print("[KWS] type %d %s:0.%d\r\n", i, kws_class_name[i], (int)(pred_result[i] * 10000));
+#endif
     }
 
+#if SHOW_KWS_INFO
+
     print("[KWS] inference done! class: %s (class %d), 0.%d\r\n",
-          class_name[max_class], max_class, (int)(max_prob * 10000));
+          kws_class_name[max_class], max_class, (int)(max_prob * 10000));
 
     print("\r\n[KWS] STFT & normalization time: %ums\r\n", stft_time);
     print("[KWS] dnn inference time: %ums\r\n", dnn_time);
     print("[KWS] kws time: %ums\r\n", total_time);
+#endif
 
     // -------------------------- 步骤5：重置变量（避免影响后续测试） --------------------------
     memset(s_pcm_1s, 0, sizeof(s_pcm_1s));
     memset(s_spectrogram, 0, sizeof(s_spectrogram));
     memset(s_fft_buf, 0, sizeof(s_fft_buf));
-    print("[KWS] kws done, variables reset\r\n\r\n");
-#endif
+
+    // 如果最大概率与未知类别的概率差异小于0.2，则判断为未知类
+    if (fabsf(max_prob - pred_result[KWS_UNKNOWN]) < 0.2f)
+    {
+        return KWS_UNKNOWN;
+    }
+    return (kws_result_t)max_class;
 }
 
 /**
